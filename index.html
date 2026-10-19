@@ -1,0 +1,1071 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#0a0500">
+<title>Иголка в стоге сена</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{
+    width:100%;height:100%;overflow:hidden;background:#0a0500;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;
+    touch-action:none;overscroll-behavior:none;
+  }
+  #game{display:block;width:100%;height:100%;touch-action:none;}
+
+  #hud{
+    position:fixed;top:0;left:0;right:0;z-index:10;
+    padding:calc(env(safe-area-inset-top,0px) + 10px) 12px 0;
+    display:flex;justify-content:space-between;gap:8px;
+    pointer-events:none;
+  }
+  .stat{
+    background:rgba(28,17,4,.7);
+    backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+    border:1px solid rgba(255,220,150,.18);
+    border-radius:14px;padding:6px 12px;min-width:68px;
+    display:flex;flex-direction:column;align-items:center;gap:1px;
+    box-shadow:0 4px 16px rgba(0,0,0,.4);
+  }
+  .stat .label{font-size:9px;letter-spacing:.09em;text-transform:uppercase;color:#e8c98a;opacity:.7;}
+  .stat .val{font-size:17px;font-weight:700;color:#ffe9b8;font-variant-numeric:tabular-nums;line-height:1.1;}
+
+  #toast{
+    position:fixed;left:50%;top:22%;transform:translateX(-50%);
+    background:rgba(20,12,2,.9);color:#ffe9b8;
+    padding:12px 20px;border-radius:16px;
+    font-size:14px;font-weight:600;z-index:15;pointer-events:none;
+    max-width:88vw;text-align:center;
+    border:1px solid rgba(255,215,140,.25);
+    animation:toastFade 4s forwards;
+  }
+  @keyframes toastFade{
+    0%{opacity:0;transform:translate(-50%,-16px);}
+    10%{opacity:1;transform:translate(-50%,0);}
+    82%{opacity:1;transform:translate(-50%,0);}
+    100%{opacity:0;transform:translate(-50%,-8px);}
+  }
+
+  #win{
+    position:fixed;inset:0;z-index:20;display:flex;align-items:center;justify-content:center;
+    padding:24px;background:rgba(8,4,0,.75);
+    backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+    opacity:0;pointer-events:none;transition:opacity .35s;
+  }
+  #win.show{opacity:1;pointer-events:auto;}
+  .card{
+    width:100%;max-width:330px;text-align:center;color:#ffe9b8;
+    background:linear-gradient(170deg,#3d2a13,#221507);
+    border:1px solid rgba(255,215,140,.3);border-radius:26px;
+    padding:28px 22px 24px;box-shadow:0 24px 70px rgba(0,0,0,.65);
+    transform:scale(.88);transition:transform .4s cubic-bezier(.2,1.5,.5,1);
+  }
+  #win.show .card{transform:scale(1);}
+  .card .emoji{font-size:44px;line-height:1;margin-bottom:10px;}
+  .card h2{font-size:21px;margin-bottom:14px;color:#ffdf9b;}
+  .row{display:flex;justify-content:space-between;font-size:15px;padding:9px 2px;
+       border-bottom:1px solid rgba(255,215,140,.13);}
+  .row:last-of-type{border-bottom:none;}
+  .row span:last-child{font-weight:700;color:#fff3d4;font-variant-numeric:tabular-nums;}
+  #winBest{margin:14px 0 18px;font-size:14px;color:#8fe8ff;font-weight:700;min-height:20px;}
+  #again{
+    width:100%;padding:15px;border:none;border-radius:16px;font-family:inherit;
+    font-size:17px;font-weight:800;color:#3a2606;cursor:pointer;
+    background:linear-gradient(180deg,#ffd97a,#dfa338);
+    box-shadow:0 8px 22px rgba(223,163,56,.35),inset 0 1px 0 rgba(255,255,255,.6);
+    transition:transform .1s;
+  }
+  #again:active{transform:scale(.96);}
+</style>
+</head>
+<body>
+
+<canvas id="game"></canvas>
+
+<div id="hud">
+  <div class="stat"><span class="label">Время</span><span class="val" id="timeVal">0.0</span></div>
+  <div class="stat"><span class="label">Убрано</span><span class="val" id="removedVal">0</span></div>
+</div>
+
+<div id="toast">Тащите палочки пальцем влево ⬅️</div>
+
+<div id="win">
+  <div class="card">
+    <div class="emoji">🧵</div>
+    <h2>Иголка найдена!</h2>
+    <div class="row"><span>Время</span><span id="winTime">—</span></div>
+    <div class="row"><span>Убрано палочек</span><span id="winRemoved">—</span></div>
+    <div id="winBest"></div>
+    <button id="again">Играть снова</button>
+  </div>
+</div>
+
+<script>
+(() => {
+'use strict';
+
+/* ========== DOM ========== */
+const canvas     = document.getElementById('game');
+const ctx        = canvas.getContext('2d');
+const timeVal    = document.getElementById('timeVal');
+const removedVal = document.getElementById('removedVal');
+const winScreen  = document.getElementById('win');
+const winTimeEl  = document.getElementById('winTime');
+const winRemovedEl = document.getElementById('winRemoved');
+const winBestEl  = document.getElementById('winBest');
+const againBtn   = document.getElementById('again');
+
+/* ========== CANVASES ========== */
+const hayCanvas    = document.createElement('canvas');
+const hayCtx       = hayCanvas.getContext('2d');
+const storedCanvas = document.createElement('canvas');
+const storedCtx    = storedCanvas.getContext('2d');
+let glowCanvas     = null;
+
+/* ========== STATE ========== */
+let W = 0, H = 0, DPR = 1;
+
+let HAY_X = 0, HAY_Y = 0, HAY_W = 0, HAY_H = 0;
+let STORE_X = 0, STORE_Y = 0, STORE_W = 0, STORE_H = 0;
+
+let PILE_X0 = 0, PILE_Y0 = 0, PILE_SIZE = 0;
+
+const straws   = [];
+const particles = [];
+const dirtyRegions = [];
+
+const needle = {
+  x:0, y:0, angle:0, len:26,
+  coverage:0, initialCoverage:1,
+  revealed:false, revealT:0
+};
+
+let drag = null;
+let found = false;
+let removedCount = 0;
+let startTime = 0;
+let elapsed = 0;
+let hintFx = null;
+let lastT = performance.now();
+let lastUI = 0;
+
+const REVEAL_R = 3;
+const STRAW_COUNT = 10000;
+const BEST_KEY = 'needle_10k_best_v1';
+const GLOW_SIZE = 100;
+
+/* ============================================================
+   СОХРАНЕНИЕ / ЗАГРУЗКА
+   ============================================================ */
+const SAVE_KEY = 'needle_save_v1';
+const SAVE_VERSION = 1;
+
+// Детерминированный PRNG — чтобы стог из того же seed получался идентичным
+function mulberry32(a){
+  return function(){
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = a;
+    t = Math.imul(t ^ t >>> 15, t | 1);
+    t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+function makeSeed(){
+  return (Math.random() * 0xFFFFFFFF) >>> 0;
+}
+let _seed = 0;
+let _rng  = Math.random;
+
+function saveGame(){
+  // Если игра уже выиграна — сохранение не нужно
+  if (found){
+    try { localStorage.removeItem(SAVE_KEY); } catch(e){}
+    return;
+  }
+  try {
+    let states = '';
+    const stored = [];
+    for (let i = 0; i < straws.length; i++){
+      const s = straws[i];
+      if (s.state === 'stored'){
+        states += '1';
+        if (s.storedX !== undefined){
+          stored.push([
+            i,
+            Math.round(s.storedX),
+            Math.round(s.storedY),
+            Math.round(s.storedAngle * 100),
+            Math.round(s.storedLen)
+          ]);
+        }
+      } else {
+        // 'pile', 'flying', 'dragging' → восстановятся как 'pile'
+        states += '0';
+      }
+    }
+
+    const data = {
+      v: SAVE_VERSION,
+      seed: _seed,
+      states,
+      needle: {
+        x: needle.x,
+        y: needle.y,
+        angle: needle.angle,
+        revealed: needle.revealed,
+        coverage: needle.coverage,
+        initialCoverage: needle.initialCoverage
+      },
+      removed: removedCount,
+      elapsedMs: Math.round(performance.now() - startTime),
+      stored
+    };
+    localStorage.setItem(SAVE_KEY, JSON.stringify(data));
+  } catch(e){}
+}
+
+function loadSave(){
+  try {
+    const raw = localStorage.getItem(SAVE_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    if (!data || data.v !== SAVE_VERSION) return null;
+    if (typeof data.seed !== 'number') return null;
+    if (typeof data.states !== 'string' || data.states.length !== STRAW_COUNT) return null;
+    if (!data.needle) return null;
+    return data;
+  } catch(e){ return null; }
+}
+
+// Отложенное сохранение — чтобы не дёргать localStorage по 10 раз в секунду
+let _saveTimer = null;
+function scheduleSave(){
+  if (found) return;
+  if (_saveTimer) return;
+  _saveTimer = setTimeout(() => {
+    _saveTimer = null;
+    saveGame();
+  }, 700);
+}
+
+let _lastAutoSave = 0;
+
+/* ========== UTILS ========== */
+function distToSeg(px, py, x1, y1, x2, y2){
+  const dx = x2-x1, dy = y2-y1;
+  const l2 = dx*dx + dy*dy;
+  let t = l2 ? ((px-x1)*dx + (py-y1)*dy) / l2 : 0;
+  if (t < 0) t = 0; else if (t > 1) t = 1;
+  const cx = x1 + t*dx, cy = y1 + t*dy;
+  return Math.hypot(px - cx, py - cy);
+}
+function segSegDist(x1,y1,x2,y2,x3,y3,x4,y4){
+  const d1 = (x4-x3)*(y1-y3) - (y4-y3)*(x1-x3);
+  const d2 = (x4-x3)*(y2-y3) - (y4-y3)*(x2-x3);
+  const d3 = (x2-x1)*(y3-y1) - (y2-y1)*(x3-x1);
+  const d4 = (x2-x1)*(y4-y1) - (y2-y1)*(x4-x1);
+  if (((d1>0&&d2<0)||(d1<0&&d2>0)) && ((d3>0&&d4<0)||(d3<0&&d4>0))) return 0;
+  return Math.min(
+    distToSeg(x1,y1,x3,y3,x4,y4),
+    distToSeg(x2,y2,x3,y3,x4,y4),
+    distToSeg(x3,y3,x1,y1,x2,y2),
+    distToSeg(x4,y4,x1,y1,x2,y2)
+  );
+}
+function easeOutCubic(x){ return 1 - Math.pow(1-x, 3); }
+function easeOutBack(x){ const c1 = 1.70158, c3 = c1 + 1; return 1 + c3*Math.pow(x-1,3) + c1*Math.pow(x-1,2); }
+function getBest(){
+  try { const v = parseFloat(localStorage.getItem(BEST_KEY)); return isNaN(v)?null:v; }
+  catch(e){ return null; }
+}
+
+/* ========== LAYOUT ========== */
+function layout(){
+  W = window.innerWidth;
+  H = window.innerHeight;
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+
+  const sideMargin = 8, topOffset = 70, botOffset = 14;
+
+  STORE_W = Math.max(88, W * 0.28);
+  STORE_X = sideMargin;
+  STORE_Y = topOffset;
+  STORE_H = H - topOffset - botOffset;
+
+  HAY_X = STORE_W + sideMargin * 2;
+  HAY_Y = topOffset;
+  HAY_W = W - HAY_X - sideMargin;
+  HAY_H = H - topOffset - botOffset;
+
+  canvas.width  = Math.round(W * DPR);
+  canvas.height = Math.round(H * DPR);
+  canvas.style.width  = W + 'px';
+  canvas.style.height = H + 'px';
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+
+  hayCanvas.width  = Math.round(HAY_W * DPR);
+  hayCanvas.height = Math.round(HAY_H * DPR);
+  hayCtx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  hayCtx.lineCap = 'round';
+
+  storedCanvas.width  = Math.round(STORE_W * DPR);
+  storedCanvas.height = Math.round(STORE_H * DPR);
+  storedCtx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  storedCtx.lineCap = 'round';
+
+  PILE_SIZE = Math.min(HAY_W, HAY_H) * 0.65;
+  PILE_X0 = (HAY_W - PILE_SIZE) / 2;
+  PILE_Y0 = (HAY_H - PILE_SIZE) / 2;
+}
+
+/* ========== STRAW GENERATION (10 000) ========== */
+function makeStraw(){
+  // ВАЖНО: здесь используется _rng вместо Math.random —
+  // так стог с тем же seed получается идентичным при восстановлении
+  const m = PILE_SIZE * 0.04;
+  const x = PILE_X0 + m + _rng() * (PILE_SIZE - m*2);
+  const y = PILE_Y0 + m + _rng() * (PILE_SIZE - m*2);
+
+  const len = 7 + _rng() * 9;
+  const ang = _rng() * Math.PI * 2;
+  const h = len / 2;
+  const x1 = x - Math.cos(ang) * h;
+  const y1 = y - Math.sin(ang) * h;
+  const x2 = x + Math.cos(ang) * h;
+  const y2 = y + Math.sin(ang) * h;
+
+  const depth = _rng();
+  const hue = 32 + _rng() * 16;
+  const sat = 62 + _rng() * 28;
+  const lig = 22 + depth * 44;
+
+  return {
+    x1, y1, x2, y2,
+    len, angle: ang, depth,
+    color: `hsl(${hue|0},${sat|0}%,${lig|0}%)`,
+    lw: 0.45 + depth * 0.7,
+    alpha: 0.55 + depth * 0.45,
+    state: 'pile',
+    nearNeedle: false
+  };
+}
+
+function drawStraw(c, s){
+  c.globalAlpha = s.alpha;
+  c.strokeStyle = s.color;
+  c.lineWidth = s.lw;
+  c.beginPath();
+  c.moveTo(s.x1, s.y1);
+  c.lineTo(s.x2, s.y2);
+  c.stroke();
+}
+
+function generateStraws(){
+  straws.length = 0;
+  for (let i = 0; i < STRAW_COUNT; i++) straws.push(makeStraw());
+  straws.sort((a, b) => a.depth - b.depth);
+
+  hayCtx.clearRect(0, 0, HAY_W, HAY_H);
+  hayCtx.lineCap = 'round';
+  for (const s of straws) drawStraw(hayCtx, s);
+  hayCtx.globalAlpha = 1;
+}
+
+/* ========== NEEDLE ========== */
+function placeNeedle(){
+  const m = PILE_SIZE * 0.15;
+  const bx0 = PILE_X0 + m, by0 = PILE_Y0 + m;
+  const bs = PILE_SIZE - m*2;
+
+  let bestX = 0, bestY = 0, bestAngle = 0, bestCov = -1;
+
+  for (let t = 0; t < 10; t++){
+    const nx = bx0 + Math.random() * bs;
+    const ny = by0 + Math.random() * bs;
+    const na = Math.random() * Math.PI * 2;
+    const h = needle.len / 2;
+    const nx1 = nx - Math.cos(na) * h;
+    const ny1 = ny - Math.sin(na) * h;
+    const nx2 = nx + Math.cos(na) * h;
+    const ny2 = ny + Math.sin(na) * h;
+
+    let cov = 0;
+    for (const s of straws){
+      if (segSegDist(nx1,ny1,nx2,ny2, s.x1,s.y1,s.x2,s.y2) < REVEAL_R) cov++;
+      if (cov > 200) break;
+    }
+    if (cov > bestCov){ bestCov = cov; bestX = nx; bestY = ny; bestAngle = na; }
+  }
+
+  needle.x = bestX;
+  needle.y = bestY;
+  needle.angle = bestAngle;
+  needle.revealed = false;
+  needle.revealT = 0;
+
+  const h = needle.len / 2;
+  const nx1 = needle.x - Math.cos(needle.angle) * h;
+  const ny1 = needle.y - Math.sin(needle.angle) * h;
+  const nx2 = needle.x + Math.cos(needle.angle) * h;
+  const ny2 = needle.y + Math.sin(needle.angle) * h;
+
+  needle.coverage = 0;
+  for (const s of straws){
+    s.nearNeedle = segSegDist(nx1,ny1,nx2,ny2, s.x1,s.y1,s.x2,s.y2) < REVEAL_R;
+    if (s.nearNeedle) needle.coverage++;
+  }
+  needle.initialCoverage = Math.max(1, needle.coverage);
+}
+
+function revealNeedle(){
+  needle.revealed = true;
+  needle.revealT = 0;
+  spawnBurst(needle.x + HAY_X, needle.y + HAY_Y);
+  if (navigator.vibrate) navigator.vibrate([20,40,80]);
+  showToast('Иголка показалась! Коснитесь её 🧵', 2600);
+  scheduleSave();
+}
+
+/* ========== GLOW ========== */
+function makeGlow(){
+  glowCanvas = document.createElement('canvas');
+  glowCanvas.width  = GLOW_SIZE;
+  glowCanvas.height = GLOW_SIZE;
+  const g = glowCanvas.getContext('2d');
+  const grad = g.createRadialGradient(GLOW_SIZE/2,GLOW_SIZE/2,0, GLOW_SIZE/2,GLOW_SIZE/2,GLOW_SIZE/2);
+  grad.addColorStop(0,   'rgba(255,240,170,1)');
+  grad.addColorStop(0.45,'rgba(255,205,80,0.55)');
+  grad.addColorStop(1,   'rgba(255,200,80,0)');
+  g.fillStyle = grad;
+  g.fillRect(0,0,GLOW_SIZE,GLOW_SIZE);
+}
+
+/* ========== PARTICLES ========== */
+function spawnPuff(x, y, n){
+  for (let i = 0; i < n; i++){
+    const a = Math.random() * Math.PI * 2;
+    const sp = 25 + Math.random() * 60;
+    const life = 0.2 + Math.random() * 0.25;
+    particles.push({
+      x, y,
+      vx: Math.cos(a)*sp, vy: Math.sin(a)*sp - 20,
+      r: 0.8 + Math.random()*1.4,
+      color: `hsl(${34+Math.random()*16|0},${60+Math.random()*30|0}%,${44+Math.random()*34|0}%)`,
+      life, maxLife: life
+    });
+  }
+}
+function spawnWarm(x, y, n){
+  for (let i = 0; i < n; i++){
+    const a = Math.random() * Math.PI * 2;
+    const sp = 20 + Math.random() * 50;
+    const life = 0.28 + Math.random() * 0.3;
+    particles.push({
+      x, y,
+      vx: Math.cos(a)*sp, vy: Math.sin(a)*sp - 30,
+      r: 0.9 + Math.random()*1.4,
+      color: `hsl(${18+Math.random()*22|0},95%,${60+Math.random()*22|0}%)`,
+      life, maxLife: life
+    });
+  }
+}
+function spawnBurst(x, y){
+  for (let i = 0; i < 32; i++){
+    const a = Math.random() * Math.PI * 2;
+    const sp = 60 + Math.random() * 200;
+    const life = 0.45 + Math.random() * 0.6;
+    particles.push({
+      x, y,
+      vx: Math.cos(a)*sp, vy: Math.sin(a)*sp - 50,
+      r: 1 + Math.random()*2.4,
+      color: Math.random() < 0.5
+        ? `hsl(${40+Math.random()*15|0},95%,${65+Math.random()*25|0}%)`
+        : `hsl(${190+Math.random()*30|0},90%,${70+Math.random()*20|0}%)`,
+      life, maxLife: life
+    });
+  }
+}
+
+/* ========== DIRTY REGIONS ========== */
+function markDirty(s){
+  const pad = 4;
+  const minX = Math.min(s.x1, s.x2) - pad;
+  const minY = Math.min(s.y1, s.y2) - pad;
+  const maxX = Math.max(s.x1, s.x2) + pad;
+  const maxY = Math.max(s.y1, s.y2) + pad;
+  dirtyRegions.push({ x: minX, y: minY, w: maxX - minX, h: maxY - minY });
+}
+
+function flushDirty(){
+  if (dirtyRegions.length === 0) return;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const r of dirtyRegions){
+    if (r.x < minX) minX = r.x;
+    if (r.y < minY) minY = r.y;
+    if (r.x + r.w > maxX) maxX = r.x + r.w;
+    if (r.y + r.h > maxY) maxY = r.y + r.h;
+  }
+  dirtyRegions.length = 0;
+  redrawPatch(minX, minY, maxX - minX, maxY - minY);
+}
+
+function redrawPatch(x, y, w, h){
+  x = Math.max(0, x); y = Math.max(0, y);
+  w = Math.min(HAY_W - x, w); h = Math.min(HAY_H - y, h);
+  if (w <= 0 || h <= 0) return;
+
+  hayCtx.clearRect(x, y, w, h);
+  const x2 = x + w, y2 = y + h;
+
+  for (const s of straws){
+    if (s.state !== 'pile') continue;
+    const sxMin = s.x1 < s.x2 ? s.x1 : s.x2;
+    const sxMax = s.x1 > s.x2 ? s.x1 : s.x2;
+    const syMin = s.y1 < s.y2 ? s.y1 : s.y2;
+    const syMax = s.y1 > s.y2 ? s.y1 : s.y2;
+    if (sxMax < x || sxMin > x2 || syMax < y || syMin > y2) continue;
+    drawStraw(hayCtx, s);
+  }
+  hayCtx.globalAlpha = 1;
+}
+
+/* ========== HIT TEST ========== */
+function findStrawAt(x, y){
+  const hx = x - HAY_X, hy = y - HAY_Y;
+  if (hx < PILE_X0 - 8 || hy < PILE_Y0 - 8 ||
+      hx > PILE_X0 + PILE_SIZE + 8 || hy > PILE_Y0 + PILE_SIZE + 8) return null;
+
+  let best = null, bestD = 12;
+  for (const s of straws){
+    if (s.state !== 'pile') continue;
+    const d = distToSeg(hx, hy, s.x1, s.y1, s.x2, s.y2);
+    if (d < bestD){ bestD = d; best = s; }
+  }
+  return best;
+}
+
+/* ========== DRAG ========== */
+function startDrag(s, x, y){
+  const cxs = (s.x1 + s.x2) / 2;
+  const cys = (s.y1 + s.y2) / 2;
+  drag = {
+    straw: s,
+    centerX: cxs + HAY_X,
+    centerY: cys + HAY_Y,
+    startX: x, startY: y,
+    x: cxs + HAY_X, y: cys + HAY_Y,
+    moved: false
+  };
+  s.state = 'dragging';
+  markDirty(s);
+
+  if (s.nearNeedle){
+    needle.coverage = Math.max(0, needle.coverage - 1);
+    if (needle.coverage === 0 && !needle.revealed) revealNeedle();
+  }
+}
+
+function moveDrag(x, y){
+  if (!drag) return;
+  drag.x = drag.centerX + (x - drag.startX);
+  drag.y = drag.centerY + (y - drag.startY);
+  if (Math.hypot(x - drag.startX, y - drag.startY) > 6) drag.moved = true;
+}
+
+function endDrag(x, y){
+  if (!drag) return;
+  const s = drag.straw;
+  const inStore = x < HAY_X - 4 && y > STORE_Y - 30;
+  const forceStore = needle.revealed;
+
+  if (inStore || !drag.moved || forceStore){
+    const tx = STORE_X + 10 + Math.random() * (STORE_W - 20);
+    const ty = STORE_Y + STORE_H - 30 - Math.random() * Math.min(STORE_H - 50, 180);
+    flyTo(s, drag.x, drag.y, tx, ty, true);
+  } else {
+    const ox = (s.x1 + s.x2) / 2 + HAY_X;
+    const oy = (s.y1 + s.y2) / 2 + HAY_Y;
+    flyTo(s, drag.x, drag.y, ox, oy, false);
+  }
+  drag = null;
+}
+
+function flyTo(s, fromX, fromY, toX, toY, toStore){
+  s.state = 'flying';
+  s.flyFrom = { x: fromX, y: fromY };
+  s.flyTo   = { x: toX, y: toY };
+  s.flyT = 0;
+  s.flyDuration = toStore ? 0.34 : 0.18;
+  s.arcH = toStore ? 42 : 8;
+  s.flyToStore = toStore;
+  s.flyAngle = Math.random() * Math.PI;
+  s.flyLen = 7 + Math.random() * 8;
+}
+
+function landStraw(s){
+  if (s.flyToStore){
+    const lx = s.flyTo.x - STORE_X;
+    const ly = s.flyTo.y - STORE_Y;
+    const h = s.flyLen / 2;
+    const ca = Math.cos(s.flyAngle), sa = Math.sin(s.flyAngle);
+
+    // Запоминаем финальную позицию — нужно для восстановления из save
+    s.storedX = lx;
+    s.storedY = ly;
+    s.storedLen = s.flyLen;
+    s.storedAngle = s.flyAngle;
+
+    storedCtx.globalAlpha = s.alpha;
+    storedCtx.strokeStyle = s.color;
+    storedCtx.lineWidth = s.lw + 0.3;
+    storedCtx.beginPath();
+    storedCtx.moveTo(lx - ca*h, ly - sa*h);
+    storedCtx.lineTo(lx + ca*h, ly + sa*h);
+    storedCtx.stroke();
+    storedCtx.globalAlpha = 1;
+
+    s.state = 'stored';
+    removedCount++;
+    removedVal.textContent = removedCount;
+    if (Math.random() < 0.2) spawnPuff(s.flyTo.x, s.flyTo.y, 2);
+
+    scheduleSave();
+  } else {
+    s.state = 'pile';
+    markDirty(s);
+    if (s.nearNeedle && !needle.revealed) needle.coverage++;
+  }
+}
+
+/* ========== HIT NEEDLE ========== */
+function hitNeedle(x, y){
+  if (!needle.revealed) return false;
+  const h = needle.len / 2;
+  const cx = needle.x + HAY_X, cy = needle.y + HAY_Y;
+  const nx1 = cx - Math.cos(needle.angle) * h;
+  const ny1 = cy - Math.sin(needle.angle) * h;
+  const nx2 = cx + Math.cos(needle.angle) * h;
+  const ny2 = cy + Math.sin(needle.angle) * h;
+  return distToSeg(x, y, nx1, ny1, nx2, ny2) < 26;
+}
+
+/* ========== WIN ========== */
+function win(){
+  if (found) return;
+  found = true;
+
+  // Победа — сбрасываем сохранение, чтобы следующий заход был с нового стога
+  try { localStorage.removeItem(SAVE_KEY); } catch(e){}
+
+  elapsed = (performance.now() - startTime) / 1000;
+  timeVal.textContent = elapsed.toFixed(1);
+  spawnBurst(needle.x + HAY_X, needle.y + HAY_Y);
+  if (navigator.vibrate) navigator.vibrate([25,45,90]);
+
+  setTimeout(() => {
+    winTimeEl.textContent = elapsed.toFixed(1) + ' с';
+    winRemovedEl.textContent = removedCount;
+    const best = getBest();
+    if (best == null || elapsed < best){
+      try { localStorage.setItem(BEST_KEY, String(elapsed)); } catch(e){}
+      winBestEl.textContent = '🏆 Новый рекорд!';
+      winBestEl.style.color = '#8fe8ff';
+    } else {
+      winBestEl.textContent = 'Лучшее время: ' + best.toFixed(1) + ' с';
+      winBestEl.style.color = '#c9a86a';
+    }
+    winScreen.classList.add('show');
+  }, 700);
+}
+
+/* ========== TOAST ========== */
+function showToast(text, duration){
+  const old = document.getElementById('toast');
+  if (old) old.remove();
+  const el = document.createElement('div');
+  el.id = 'toast';
+  el.textContent = text;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), duration || 3400);
+}
+
+/* ========== INPUT ========== */
+canvas.addEventListener('pointerdown', e => {
+  if (found) return;
+  e.preventDefault();
+  const x = e.clientX, y = e.clientY;
+  if (needle.revealed && hitNeedle(x, y)){ win(); return; }
+  const s = findStrawAt(x, y);
+  if (s){
+    startDrag(s, x, y);
+    if (navigator.vibrate) navigator.vibrate(6);
+  } else {
+    spawnPuff(x, y, 2);
+  }
+}, { passive: false });
+
+canvas.addEventListener('pointermove', e => {
+  if (drag){ e.preventDefault(); moveDrag(e.clientX, e.clientY); }
+}, { passive: false });
+
+canvas.addEventListener('pointerup', e => {
+  if (drag){ e.preventDefault(); endDrag(e.clientX, e.clientY); }
+}, { passive: false });
+
+canvas.addEventListener('pointercancel', () => {
+  if (drag) endDrag(drag.x, drag.y);
+});
+
+/* ========== LOOP ========== */
+function loop(t){
+  requestAnimationFrame(loop);
+  const dt = Math.min((t - lastT) / 1000, 0.05);
+  lastT = t;
+
+  if (!found){
+    elapsed = (performance.now() - startTime) / 1000;
+    if (t - lastUI > 100){ timeVal.textContent = elapsed.toFixed(1); lastUI = t; }
+  }
+
+  for (const s of straws){
+    if (s.state !== 'flying') continue;
+    s.flyT += dt / s.flyDuration;
+    if (s.flyT >= 1){ s.flyT = 1; landStraw(s); }
+  }
+
+  if (needle.revealed && needle.revealT < 1)
+    needle.revealT = Math.min(1, needle.revealT + dt * 4);
+
+  if (hintFx){ hintFx.t += dt; if (hintFx.t > 1.7) hintFx = null; }
+
+  for (let i = particles.length - 1; i >= 0; i--){
+    const p = particles[i];
+    p.x += p.vx * dt; p.y += p.vy * dt;
+    p.vy += 320 * dt; p.vx *= 0.985;
+    p.life -= dt;
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+
+  // Периодический автосейв (страховка на случай, если scheduleSave не успел)
+  if (!found && t - _lastAutoSave > 15000){
+    _lastAutoSave = t;
+    saveGame();
+  }
+
+  flushDirty();
+  render(t);
+}
+
+/* ========== RENDER ========== */
+function render(t){
+  ctx.fillStyle = '#0a0500';
+  ctx.fillRect(0, 0, W, H);
+
+  drawStorageBg();
+
+  const pileCx = HAY_X + PILE_X0 + PILE_SIZE/2;
+  const pileCy = HAY_Y + PILE_Y0 + PILE_SIZE/2;
+  const halo = ctx.createRadialGradient(pileCx, pileCy, PILE_SIZE*0.2, pileCx, pileCy, PILE_SIZE*0.85);
+  halo.addColorStop(0, 'rgba(120,80,20,0.18)');
+  halo.addColorStop(1, 'rgba(120,80,20,0)');
+  ctx.fillStyle = halo;
+  ctx.beginPath();
+  ctx.arc(pileCx, pileCy, PILE_SIZE*0.85, 0, Math.PI*2);
+  ctx.fill();
+
+  if (!needle.revealed){
+    const frac = needle.coverage / needle.initialCoverage;
+    const ca = Math.max(0.05, (1 - frac) * 0.42);
+    const size = 90;
+    ctx.globalAlpha = ca;
+    ctx.drawImage(glowCanvas,
+      needle.x + HAY_X - size/2,
+      needle.y + HAY_Y - size/2,
+      size, size);
+    ctx.globalAlpha = 1;
+  }
+
+  ctx.drawImage(hayCanvas, HAY_X, HAY_Y, HAY_W, HAY_H);
+
+  if (needle.revealed) drawNeedle(t);
+
+  ctx.drawImage(storedCanvas, STORE_X, STORE_Y, STORE_W, STORE_H);
+
+  if (drag) drawHeldStraw(drag.x, drag.y, drag.straw);
+
+  for (const s of straws){
+    if (s.state !== 'flying') continue;
+    drawFlyingStraw(s);
+  }
+
+  if (hintFx) drawHintFx();
+
+  for (const p of particles){
+    ctx.globalAlpha = Math.max(0, p.life / p.maxLife);
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawStorageBg(){
+  ctx.save();
+  ctx.strokeStyle = 'rgba(255,230,170,0.22)';
+  ctx.lineWidth = 2;
+  ctx.setLineDash([8, 6]);
+  ctx.strokeRect(STORE_X + 1, STORE_Y + 1, STORE_W - 2, STORE_H - 2);
+  ctx.setLineDash([]);
+  ctx.fillStyle = 'rgba(255,235,190,0.42)';
+  ctx.font = 'bold 10px -apple-system, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('СЮДА УБИРАТЬ', STORE_X + STORE_W/2, STORE_Y + STORE_H - 6);
+  ctx.textAlign = 'left';
+  ctx.restore();
+}
+
+function drawHeldStraw(cx, cy, s){
+  const h = s.len / 2;
+  const ca = Math.cos(s.angle), sa = Math.sin(s.angle);
+  ctx.save();
+  ctx.strokeStyle = s.color;
+  ctx.lineWidth = s.lw + 0.8;
+  ctx.globalAlpha = 1;
+  ctx.beginPath();
+  ctx.moveTo(cx - ca*h, cy - sa*h);
+  ctx.lineTo(cx + ca*h, cy + sa*h);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawFlyingStraw(s){
+  const e = easeOutCubic(s.flyT);
+  const cx = s.flyFrom.x + (s.flyTo.x - s.flyFrom.x) * e;
+  const cy = s.flyFrom.y + (s.flyTo.y - s.flyFrom.y) * e - Math.sin(s.flyT * Math.PI) * s.arcH;
+  const ang = s.angle + (s.flyAngle - s.angle) * e;
+  const len = s.len + (s.flyLen - s.len) * e;
+  const h = len / 2;
+  const ca = Math.cos(ang), sa = Math.sin(ang);
+
+  ctx.save();
+  ctx.strokeStyle = s.color;
+  ctx.lineWidth = s.lw;
+  ctx.globalAlpha = s.alpha * (1 - s.flyT * 0.15);
+  ctx.beginPath();
+  ctx.moveTo(cx - ca*h, cy - sa*h);
+  ctx.lineTo(cx + ca*h, cy + sa*h);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawNeedle(t){
+  const sc = easeOutBack(needle.revealT);
+  const pulse = 0.5 + 0.5 * Math.sin(t / 190);
+  const h = needle.len / 2;
+  const cx = needle.x + HAY_X, cy = needle.y + HAY_Y;
+
+  const haloR = 18 + pulse * 9;
+  const halo = ctx.createRadialGradient(cx, cy, 0, cx, cy, haloR);
+  halo.addColorStop(0, 'rgba(140,240,255,0.65)');
+  halo.addColorStop(1, 'rgba(140,240,255,0)');
+  ctx.fillStyle = halo;
+  ctx.beginPath();
+  ctx.arc(cx, cy, haloR, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(sc, sc);
+  ctx.rotate(needle.angle);
+  ctx.lineCap = 'round';
+
+  const g = ctx.createLinearGradient(0, -2, 0, 2);
+  g.addColorStop(0,   '#ffffff');
+  g.addColorStop(0.5, '#d2d2e0');
+  g.addColorStop(1,   '#8a8a9c');
+  ctx.strokeStyle = g;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(-h, 0);
+  ctx.lineTo(h * 0.9, 0);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.moveTo(h * 0.88, -1);
+  ctx.lineTo(h + 1.2, 0);
+  ctx.lineTo(h * 0.88, 1);
+  ctx.closePath();
+  ctx.fillStyle = '#eaeaf4';
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.ellipse(-h + 4, 0, 2.1, 1.1, 0, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(40,35,28,0.95)';
+  ctx.fill();
+
+  ctx.restore();
+}
+
+function drawHintFx(){
+  const p = hintFx.t / 1.7;
+  const r = 12 + p * 90;
+  ctx.save();
+  ctx.strokeStyle = `rgba(130,225,255,${(1 - p) * 0.9})`;
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.arc(hintFx.x, hintFx.y, r, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+/* ========== NEW GAME (с восстановлением) ========== */
+function newGame(restoreFrom){
+  found = false;
+  removedCount = 0;
+  particles.length = 0;
+  dirtyRegions.length = 0;
+  drag = null;
+  hintFx = null;
+  elapsed = 0;
+  lastUI = 0;
+  _lastAutoSave = 0;
+
+  removedVal.textContent = '0';
+  timeVal.textContent = '0.0';
+  winScreen.classList.remove('show');
+
+  layout();
+
+  // ——— ВЕТКА ВОССТАНОВЛЕНИЯ ———
+  if (restoreFrom && restoreFrom.states && restoreFrom.states.length === STRAW_COUNT){
+    _seed = restoreFrom.seed;
+    _rng = mulberry32(_seed);
+    generateStraws();
+    _rng = Math.random;
+
+    // Применяем сохранённые состояния палочек
+    for (let i = 0; i < straws.length; i++){
+      if (restoreFrom.states[i] === '1') straws[i].state = 'stored';
+    }
+
+    // Восстанавливаем иголку
+    needle.x = restoreFrom.needle.x;
+    needle.y = restoreFrom.needle.y;
+    needle.angle = restoreFrom.needle.angle;
+    needle.revealed = !!restoreFrom.needle.revealed;
+    needle.revealT = needle.revealed ? 1 : 0;
+    needle.initialCoverage = restoreFrom.needle.initialCoverage || 1;
+
+    // Пересчитываем nearNeedle и реальное покрытие
+    const h = needle.len / 2;
+    const nx1 = needle.x - Math.cos(needle.angle) * h;
+    const ny1 = needle.y - Math.sin(needle.angle) * h;
+    const nx2 = needle.x + Math.cos(needle.angle) * h;
+    const ny2 = needle.y + Math.sin(needle.angle) * h;
+    let cov = 0;
+    for (const s of straws){
+      s.nearNeedle = s.state === 'pile' &&
+        segSegDist(nx1,ny1,nx2,ny2, s.x1,s.y1,s.x2,s.y2) < REVEAL_R;
+      if (s.nearNeedle) cov++;
+    }
+    needle.coverage = cov;
+
+    // Перерисовываем канвас стога (только 'pile')
+    hayCtx.clearRect(0, 0, HAY_W, HAY_H);
+    for (const s of straws){
+      if (s.state === 'pile') drawStraw(hayCtx, s);
+    }
+    hayCtx.globalAlpha = 1;
+
+    // Перерисовываем канвас зоны "СЮДА УБИРАТЬ"
+    storedCtx.clearRect(0, 0, STORE_W, STORE_H);
+    if (restoreFrom.stored){
+      for (const st of restoreFrom.stored){
+        const s = straws[st[0]];
+        if (!s) continue;
+        const lx = st[1], ly = st[2];
+        const a = st[3] / 100, l = st[4];
+        const hh = l / 2;
+        const ca = Math.cos(a), sa = Math.sin(a);
+        storedCtx.globalAlpha = s.alpha;
+        storedCtx.strokeStyle = s.color;
+        storedCtx.lineWidth = s.lw + 0.3;
+        storedCtx.beginPath();
+        storedCtx.moveTo(lx - ca*hh, ly - sa*hh);
+        storedCtx.lineTo(lx + ca*hh, ly + sa*hh);
+        storedCtx.stroke();
+      }
+      storedCtx.globalAlpha = 1;
+    }
+
+    removedCount = restoreFrom.removed || 0;
+    removedVal.textContent = removedCount;
+    startTime = performance.now() - (restoreFrom.elapsedMs || 0);
+    elapsed = (restoreFrom.elapsedMs || 0) / 1000;
+    timeVal.textContent = elapsed.toFixed(1);
+
+    showToast('💾 Прогресс восстановлен', 2400);
+  }
+  // ——— СВЕЖИЙ СТАРТ ———
+  else {
+    try { localStorage.removeItem(SAVE_KEY); } catch(e){}
+    _seed = makeSeed();
+    _rng = mulberry32(_seed);
+    storedCtx.clearRect(0, 0, STORE_W, STORE_H);
+    generateStraws();
+    _rng = Math.random;
+    placeNeedle();
+    startTime = performance.now();
+    // Немедленно сохраняем seed, чтобы при мгновенном закрытии не потерялся стог
+    scheduleSave();
+  }
+}
+
+againBtn.addEventListener('click', () => {
+  winScreen.classList.remove('show');
+  setTimeout(() => newGame(), 130);
+});
+
+/* ========== СОХРАНЕНИЕ ПРИ УХОДЕ ========== */
+window.addEventListener('beforeunload', () => {
+  if (!found) saveGame();
+});
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && !found) saveGame();
+});
+// Для iOS Safari (pagehide надёжнее beforeunload)
+window.addEventListener('pagehide', () => {
+  if (!found) saveGame();
+});
+
+/* ========== INIT ========== */
+makeGlow();
+newGame(loadSave());
+requestAnimationFrame(loop);
+
+setTimeout(() => {
+  const t = document.getElementById('toast');
+  if (t) t.remove();
+}, 4500);
+
+/* ========== RESIZE ========== */
+let resizeTimer = null;
+function onResize(){
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    // При ресайзе сохраняем и перезапускаем с восстановлением
+    if (!found) saveGame();
+    makeGlow();
+    newGame(loadSave());
+  }, 400);
+}
+window.addEventListener('resize', onResize);
+window.addEventListener('orientationchange', onResize);
+
+})();
+</script>
+</body>
+</html>
